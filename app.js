@@ -142,8 +142,8 @@ function calculateNutrition(baseNutrients, quantity, unit, foodName) {
   };
 }
 
-// Endpoint: POST /api/nutrition (text-based food search with quantity)
-app.post('/api/nutrition', async (req, res) => {
+// Endpoint: POST /nutrition (direct route for Render compatibility)
+app.post('/nutrition', async (req, res) => {
   // Debug logging
   console.log('Request body:', req.body);
   console.log('Content-Type:', req.get('Content-Type'));
@@ -254,11 +254,11 @@ app.post('/api/nutrition', async (req, res) => {
   }
 });
 
-// Endpoint: GET /api/nutrition - Simple food search (for testing)
-app.get('/api/nutrition', (req, res) => {
+// Endpoint: GET /nutrition - Simple food search (for testing)
+app.get('/nutrition', (req, res) => {
   res.json({
     message: 'Use POST method to search for nutrition data',
-    usage: 'POST /api/nutrition with JSON body: {"foodName": "apple"}',
+    usage: 'POST /nutrition with JSON body: {"foodName": "apple"}',
     examples: {
       simple: 'apple',
       pieces: '2 apples', 
