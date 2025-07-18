@@ -6,7 +6,7 @@ async function testTextEndpoint() {
   console.log('🧪 Testing text-based nutrition endpoint...');
   
   try {
-    const response = await axios.post('http://localhost:3000/api/nutrition', {
+    const response = await axios.post('http://localhost:3000/nutrition', {
       foodName: 'banana'
     });
     
@@ -49,7 +49,7 @@ async function testImageEndpoint() {
     const form = new FormData();
     form.append('image', fs.createReadStream('test-image.png'));
     
-    const response = await axios.post('http://localhost:3000/api/nutrition/image', form, {
+    const response = await axios.post('http://localhost:3000/nutrition/image', form, {
       headers: form.getHeaders(),
       timeout: 30000 // 30 second timeout for image processing
     });

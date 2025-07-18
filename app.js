@@ -16,8 +16,6 @@ if (!process.env.USDA_API_KEY) {
   process.exit(1);
 }
 
-
-
 // Function to extract food and quantity from text
 function extractFoodAndQuantity(text) {
   const input = text.toLowerCase().trim();
@@ -470,11 +468,11 @@ app.get('/api/addtocart', async (req, res) => {
     const nutritionData = nutritionDataArray[i];
     if (!nutritionData.originalInput || !nutritionData.parsedFood || !nutritionData.calculatedNutrition) {
       return res.status(400).json({
-        error: `Invalid nutrition data format for item ${i + 1}. Please send data from /api/nutrition endpoint`,
+        error: `Invalid nutrition data format for item ${i + 1}. Please send data from /nutrition endpoint`,
         examples: {
           singleItem: 'GET /api/addtocart?data={"originalInput":"2 apples","parsedFood":"apple","calculatedNutrition":{"calories":"189 kcal"}}',
           multipleItems: 'GET /api/addtocart?data=[{"originalInput":"2 apples","parsedFood":"apple","calculatedNutrition":{"calories":"189 kcal"}},{"originalInput":"200g rice","parsedFood":"rice","calculatedNutrition":{"calories":"278 kcal"}}]',
-          note: 'Send complete JSON data from /api/nutrition response(s)'
+          note: 'Send complete JSON data from /nutrition response(s)'
         },
         expectedFormat: {
           originalInput: 'string',
