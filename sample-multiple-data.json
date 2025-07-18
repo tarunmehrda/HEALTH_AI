@@ -1,0 +1,56 @@
+[
+  {
+    "originalInput": "2 apples",
+    "parsedFood": "apple",
+    "inputQuantity": "2 pieces",
+    "calculationQuantity": "2 pieces",
+    "foodName": "APPLE",
+    "calculatedNutrition": {
+      "calories": "189 kcal",
+      "protein": "0 g",
+      "fat": "2.4 g",
+      "carbohydrates": "52 g",
+      "sugar": "37.8 g",
+      "fiber": "11.6 g",
+      "calcium": "0 mg",
+      "iron": "0.84 mg",
+      "sodium": "0 mg"
+    }
+  },
+  {
+    "originalInput": "200g rice",
+    "parsedFood": "rice",
+    "inputQuantity": "200 grams",
+    "calculationQuantity": "200 grams",
+    "foodName": "RICE",
+    "calculatedNutrition": {
+      "calories": "278 kcal",
+      "protein": "6.9 g",
+      "fat": "4.9 g",
+      "carbohydrates": "52.8 g",
+      "sugar": "2.8 g",
+      "fiber": "2.8 g",
+      "calcium": "56 mg",
+      "iron": "3.76 mg",
+      "sodium": "930 mg"
+    }
+  },
+  {
+    "originalInput": "1 banana",
+    "parsedFood": "banana",
+    "inputQuantity": "1 pieces",
+    "calculationQuantity": "1 pieces",
+    "foodName": "BANANA",
+    "calculatedNutrition": {
+      "calories": "105 kcal",
+      "protein": "1.3 g",
+      "fat": "0.4 g",
+      "carbohydrates": "27 g",
+      "sugar": "14.4 g",
+      "fiber": "3.1 g",
+      "calcium": "5 mg",
+      "iron": "0.26 mg",
+      "sodium": "1 mg"
+    }
+  }
+]
