@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USDA Nutrition Tracker</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            background: #fafafa;
+        }
+        
+        .section h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+        
+        .input-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.3);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #f44336, #d32f2f);
+        }
+        
+        .btn-danger:hover {
+            box-shadow: 0 5px 15px rgba(244, 67, 54, 0.3);
+        }
+        
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .result.success {
+            background: #e8f5e8;
+            border: 2px solid #4CAF50;
+            color: #2e7d32;
+        }
+        
+        .result.error {
+            background: #ffebee;
+            border: 2px solid #f44336;
+            color: #c62828;
+        }
+        
+        .streak-info {
+            background: linear-gradient(135deg, #FF6B6B, #4ECDC4);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .streak-number {
+            font-size: 3em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .examples {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        
+        .examples h4 {
+            color: #1976d2;
+            margin-bottom: 10px;
+        }
+        
+        .examples ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        
+        .examples li {
+            background: white;
+            margin: 5px 0;
+            padding: 8px 12px;
+            border-radius: 5px;
+            border-left: 4px solid #2196F3;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+        
+        @media (max-width: 600px) {
+            .container {
+                margin: 10px;
+                border-radius: 10px;
+            }
+            
+            .header {
+                padding: 20px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🥗 USDA Nutrition Tracker</h1>
+            <p>Track your nutrition and build healthy streaks!</p>
+        </div>
+        
+        <div class="content">
+            <!-- Streak Info -->
+            <div id="streakInfo" class="streak-info">
+                <div>Current Streak</div>
+                <div class="streak-number" id="streakNumber">0</div>
+                <div id="streakMessage">Start your nutrition tracking journey!</div>
+            </div>
+            
+            <!-- Search Nutrition -->
+            <div class="section">
+                <h2>🔍 Search Food Nutrition</h2>
+                <div class="input-group">
+                    <label for="foodInput">Enter food description:</label>
+                    <input type="text" id="foodInput" placeholder="e.g., apple, 2 bananas, 200g rice, 1.5kg chicken">
+                </div>
+                <button class="btn" onclick="searchNutrition()">Search Nutrition</button>
+                <div class="loading" id="searchLoading">Searching...</div>
+                <div id="nutritionResult" class="result" style="display: none;"></div>
+                
+                <div class="examples">
+                    <h4>💡 Example inputs:</h4>
+                    <ul>
+                        <li>apple</li>
+                        <li>2 bananas</li>
+                        <li>200 grams rice</li>
+                        <li>1.5 kg chicken</li>
+                        <li>I had 100g oats</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Cart Management -->
+            <div class="section">
+                <h2>🛒 My Daily Cart</h2>
+                <button class="btn" onclick="viewCart()">View Cart</button>
+                <button class="btn btn-danger" onclick="clearCart()">Clear Cart</button>
+                <div class="loading" id="cartLoading">Loading...</div>
+                <div id="cartResult" class="result" style="display: none;"></div>
+            </div>
+            
+            <!-- Quick Actions -->
+            <div class="section">
+                <h2>⚡ Quick Actions</h2>
+                <button class="btn" onclick="getStreakInfo()">Check Streak</button>
+                <button class="btn" onclick="healthCheck()">Health Check</button>
+                <div id="quickResult" class="result" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let lastNutritionData = null;
+        
+        // Load streak info on page load
+        window.onload = function() {
+            getStreakInfo();
+        };
+        
+        async function searchNutrition() {
+            const foodInput = document.getElementById('foodInput');
+            const foodName = foodInput.value.trim();
+            
+            if (!foodName) {
+                showResult('nutritionResult', 'Please enter a food description', 'error');
+                return;
+            }
+            
+            showLoading('searchLoading', true);
+            hideResult('nutritionResult');
+            
+            try {
+                const response = await fetch('/nutrition', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ foodName: foodName })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    lastNutritionData = data;
+                    let result = `✅ Found: ${data.foodName}\n\n`;
+                    result += `📝 Input: ${data.originalInput}\n`;
+                    result += `🍽️ Parsed: ${data.parsedFood} (${data.inputQuantity})\n\n`;
+                    result += `📊 Nutrition:\n`;
+                    result += `• Calories: ${data.calculatedNutrition.calories}\n`;
+                    result += `• Protein: ${data.calculatedNutrition.protein}\n`;
+                    result += `• Fat: ${data.calculatedNutrition.fat}\n`;
+                    result += `• Carbs: ${data.calculatedNutrition.carbohydrates}\n\n`;
+                    result += `➕ Ready to add to cart!`;
+                    
+                    showResult('nutritionResult', result, 'success');
+                    
+                    // Add "Add to Cart" button
+                    const resultDiv = document.getElementById('nutritionResult');
+                    const addButton = document.createElement('button');
+                    addButton.className = 'btn';
+                    addButton.textContent = 'Add to Cart';
+                    addButton.onclick = addToCart;
+                    addButton.style.marginTop = '15px';
+                    resultDiv.appendChild(addButton);
+                    
+                } else {
+                    showResult('nutritionResult', `❌ Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('nutritionResult', `❌ Network error: ${error.message}`, 'error');
+            }
+            
+            showLoading('searchLoading', false);
+        }
+        
+        async function addToCart() {
+            if (!lastNutritionData) {
+                showResult('nutritionResult', '❌ No nutrition data to add. Search for food first.', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/addtocart', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(lastNutritionData)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    let result = `✅ ${data.message}\n\n`;
+                    result += `🛒 Cart Summary:\n`;
+                    result += `• Total Items: ${data.cartSummary.totalItems}\n`;
+                    result += `• Total Calories: ${data.cartSummary.totalCalories}\n\n`;
+                    result += `🔥 Streak Info:\n`;
+                    result += `• Current Streak: ${data.streakInfo.currentStreak} days\n`;
+                    result += `• Longest Streak: ${data.streakInfo.longestStreak} days\n`;
+                    result += `• Status: ${data.streakInfo.message}`;
+                    
+                    showResult('nutritionResult', result, 'success');
+                    updateStreakDisplay(data.streakInfo);
+                } else {
+                    showResult('nutritionResult', `❌ Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('nutritionResult', `❌ Network error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function viewCart() {
+            showLoading('cartLoading', true);
+            hideResult('cartResult');
+            
+            try {
+                const response = await fetch('/cart');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    let result = `🛒 Cart Summary:\n`;
+                    result += `• Total Items: ${data.summary.totalItems}\n`;
+                    result += `• Total Calories: ${data.summary.totalCalories}\n\n`;
+                    
+                    if (data.cart.length > 0) {
+                        result += `📋 Items in Cart:\n`;
+                        data.cart.forEach((item, index) => {
+                            result += `${index + 1}. ${item.parsedFood} (${item.inputQuantity})\n`;
+                            result += `   Calories: ${item.calculatedNutrition.calories}\n`;
+                        });
+                        result += `\n`;
+                    } else {
+                        result += `📭 Cart is empty\n\n`;
+                    }
+                    
+                    result += `🔥 Streak: ${data.streakInfo.currentStreak} days\n`;
+                    result += `🏆 Best: ${data.streakInfo.longestStreak} days\n`;
+                    result += `📅 Total Days: ${data.streakInfo.totalDaysLogged}`;
+                    
+                    showResult('cartResult', result, 'success');
+                    updateStreakDisplay(data.streakInfo);
+                } else {
+                    showResult('cartResult', `❌ Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('cartResult', `❌ Network error: ${error.message}`, 'error');
+            }
+            
+            showLoading('cartLoading', false);
+        }
+        
+        async function clearCart() {
+            if (!confirm('Are you sure you want to clear the cart?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/cart', { method: 'DELETE' });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('cartResult', `✅ ${data.message}`, 'success');
+                } else {
+                    showResult('cartResult', `❌ Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('cartResult', `❌ Network error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function getStreakInfo() {
+            try {
+                const response = await fetch('/streak');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    updateStreakDisplay(data);
+                    
+                    let result = `🔥 Streak Information:\n\n`;
+                    result += `• Current Streak: ${data.currentStreak} days\n`;
+                    result += `• Longest Streak: ${data.longestStreak} days\n`;
+                    result += `• Total Days Logged: ${data.totalDaysLogged}\n`;
+                    result += `• Today Logged: ${data.todayLogged ? 'Yes ✅' : 'No ❌'}\n`;
+                    result += `• Last Active: ${data.lastActiveDate || 'Never'}\n\n`;
+                    result += `💬 ${data.message}`;
+                    
+                    showResult('quickResult', result, 'success');
+                } else {
+                    showResult('quickResult', `❌ Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult('quickResult', `❌ Network error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function healthCheck() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                
+                if (response.ok) {
+                    let result = `✅ ${data.message}\n`;
+                    result += `🕐 Timestamp: ${data.timestamp}\n`;
+                    result += `🌐 Server Status: ${data.status}`;
+                    
+                    showResult('quickResult', result, 'success');
+                } else {
+                    showResult('quickResult', `❌ Health check failed`, 'error');
+                }
+            } catch (error) {
+                showResult('quickResult', `❌ Network error: ${error.message}`, 'error');
+            }
+        }
+        
+        function updateStreakDisplay(streakInfo) {
+            document.getElementById('streakNumber').textContent = streakInfo.currentStreak;
+            
+            let message = '';
+            if (streakInfo.currentStreak === 0) {
+                message = 'Start your nutrition tracking journey!';
+            } else if (streakInfo.todayLogged) {
+                message = `Great! You're on a ${streakInfo.currentStreak}-day streak! 🔥`;
+            } else {
+                message = `Don't break your ${streakInfo.currentStreak}-day streak!`;
+            }
+            
+            document.getElementById('streakMessage').textContent = message;
+        }
+        
+        function showResult(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `result ${type}`;
+            element.style.display = 'block';
+        }
+        
+        function hideResult(elementId) {
+            document.getElementById(elementId).style.display = 'none';
+        }
+        
+        function showLoading(elementId, show) {
+            document.getElementById(elementId).style.display = show ? 'block' : 'none';
+        }
+        
+        // Allow Enter key to search
+        document.getElementById('foodInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchNutrition();
+            }
+        });
+    </script>
+</body>
+</html>

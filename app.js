@@ -19,59 +19,65 @@ if (!process.env.USDA_API_KEY) {
 // Function to extract food and quantity from text
 function extractFoodAndQuantity(text) {
   const input = text.toLowerCase().trim();
-
-  // Patterns for different quantity formats
+  
+  // Enhanced regex patterns to include ml
   const patterns = [
-    // "1.5 kg of rice", "2 kg chicken", "0.5 kilograms rice"
-    /(\d+(?:\.\d+)?)\s*(?:kilograms?|kg)\s+(?:of\s+)?([a-zA-Z\s]+?)$/,
-    // "200 grams of rice", "100g of rice", "150 grams rice"
-    /(\d+(?:\.\d+)?)\s*(?:grams?|g)\s+(?:of\s+)?([a-zA-Z\s]+?)$/,
-    // "I had 1.5 kg of rice", "I ate 2 kg chicken"
-    /(?:i\s+(?:had|ate|consumed)\s+)?(\d+(?:\.\d+)?)\s*(?:kilograms?|kg)\s+(?:of\s+)?([a-zA-Z\s]+?)$/,
-    // "I had 200 grams of rice", "I ate 100g rice"
-    /(?:i\s+(?:had|ate|consumed)\s+)?(\d+(?:\.\d+)?)\s*(?:grams?|g)\s+(?:of\s+)?([a-zA-Z\s]+?)$/,
-    // "2 apples", "3 bananas"
-    /(\d+(?:\.\d+)?)\s+([a-zA-Z\s]+?)s?$/,
-    // "I had 2 apples", "I ate 3 bananas"
-    /(?:i\s+(?:had|ate|consumed)\s+)?(\d+(?:\.\d+)?)\s+([a-zA-Z\s]+?)s?$/,
+    // ml patterns
+    /(\d+(?:\.\d+)?)\s*ml\s+(?:of\s+)?(.+)/,
+    /(\d+(?:\.\d+)?)\s*milliliters?\s+(?:of\s+)?(.+)/,
+    /(\d+(?:\.\d+)?)\s*millilitres?\s+(?:of\s+)?(.+)/,
+    // existing patterns...
+    /(\d+(?:\.\d+)?)\s*kg\s+(?:of\s+)?(.+)/,
+    /(\d+(?:\.\d+)?)\s*kilograms?\s+(?:of\s+)?(.+)/,
+    /(\d+(?:\.\d+)?)\s*g\s+(?:of\s+)?(.+)/,
+    /(\d+(?:\.\d+)?)\s*grams?\s+(?:of\s+)?(.+)/,
+    /(\d+(?:\.\d+)?)\s+(.+)/
   ];
 
+  // Check each pattern
   for (const pattern of patterns) {
     const match = input.match(pattern);
     if (match) {
-      const quantity = parseFloat(match[1]);
-      const food = match[2].trim();
-
-      // Determine unit type and convert kg to grams
-      let finalQuantity = quantity;
+      let quantity = parseFloat(match[1]);
+      let foodName = match[2].trim();
       let unit = 'pieces';
+      let originalUnit = 'pieces';
 
-      if (/kilograms?|kg/.test(input)) {
-        finalQuantity = quantity * 1000; // Convert kg to grams
+      // Determine unit based on pattern
+      if (pattern.source.includes('ml') || pattern.source.includes('milliliter')) {
+        unit = 'ml';
+        originalUnit = 'ml';
+      } else if (pattern.source.includes('kg') || pattern.source.includes('kilogram')) {
         unit = 'grams';
-      } else if (/grams?|g/.test(input)) {
+        originalUnit = 'kg';
+        quantity = quantity * 1000; // Convert kg to grams
+      } else if (pattern.source.includes('g') || pattern.source.includes('gram')) {
         unit = 'grams';
+        originalUnit = 'grams';
+      } else {
+        unit = 'pieces';
+        originalUnit = 'pieces';
       }
 
       return {
-        food: food,
-        quantity: finalQuantity,
+        originalText: text,
+        food: foodName,
+        quantity: quantity,
         unit: unit,
-        originalQuantity: quantity,
-        originalUnit: /kilograms?|kg/.test(input) ? 'kg' : (/grams?|g/.test(input) ? 'grams' : 'pieces'),
-        originalText: text
+        originalQuantity: parseFloat(match[1]),
+        originalUnit: originalUnit
       };
     }
   }
 
-  // If no quantity found, assume 1 piece
+  // Default case - no quantity found
   return {
-    food: input.replace(/^(?:i\s+(?:had|ate|consumed)\s+)?/, ''),
+    originalText: text,
+    food: input,
     quantity: 1,
     unit: 'pieces',
     originalQuantity: 1,
-    originalUnit: 'pieces',
-    originalText: text
+    originalUnit: 'pieces'
   };
 }
 
@@ -935,9 +941,61 @@ app.get('/api/streak/history', (req, res) => {
   });
 });
 
+// Root endpoint - API documentation
+app.get('/', (req, res) => {
+  res.json({
+    name: 'USDA Nutrition API',
+    version: '1.0.0',
+    description: 'Complete nutrition analysis API with streak tracking',
+    endpoints: {
+      nutrition: {
+        method: 'POST',
+        url: '/nutrition',
+        description: 'Get nutrition data for food items',
+        body: { foodName: 'string (e.g., "2 apples", "200g rice", "1.5kg chicken")' }
+      },
+      cart: {
+        add: { method: 'GET', url: '/api/addtocart?data={nutritionData}', description: 'Add nutrition data to cart' },
+        view: { method: 'GET', url: '/api/cart', description: 'View current cart and streak info' },
+        clear: { method: 'DELETE', url: '/api/cart', description: 'Clear entire cart' },
+        remove: { method: 'DELETE', url: '/api/cart/:id', description: 'Remove specific item from cart' }
+      },
+      streak: {
+        view: { method: 'GET', url: '/api/streak', description: 'Get detailed streak information' },
+        reset: { method: 'POST', url: '/api/streak/reset', description: 'Reset streak data' },
+        history: { method: 'GET', url: '/api/streak/history', description: 'Get complete streak and nutrition history' }
+      },
+      nutrition_history: {
+        today: { method: 'GET', url: '/api/nutrition/today', description: 'Get today\'s nutrition data' },
+        history: { method: 'GET', url: '/api/nutrition/history', description: 'Get nutrition history by date range' }
+      }
+    },
+    examples: {
+      simple: 'POST /nutrition {"foodName": "apple"}',
+      quantity: 'POST /nutrition {"foodName": "2 apples"}',
+      grams: 'POST /nutrition {"foodName": "200 grams of rice"}',
+      kilograms: 'POST /nutrition {"foodName": "1.5 kg chicken"}'
+    },
+    features: [
+      'USDA nutrition database integration',
+      'Quantity parsing (pieces, grams, kilograms)',
+      'Nutrition cart management',
+      'Daily streak tracking',
+      'Nutrition history logging',
+      'Achievement system'
+    ]
+  });
+});
+
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', message: 'USDA Nutrition API is live' });
+  res.json({
+    status: 'OK',
+    message: 'USDA Nutrition API is live',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
+  });
 });
 
 // Error handler
@@ -946,10 +1004,27 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`- Local: http://localhost:${PORT}`);
   console.log(`- Local IP: http://192.168.124.246:${PORT}`);
   console.log(`- Android Emulator: http://10.0.2.2:${PORT}`);
   console.log(`- Health check: http://localhost:${PORT}/health`);
+  console.log(`- Render URL: https://your-app-name.onrender.com`);
+  console.log(`- Environment: ${process.env.NODE_ENV || 'development'}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
 });
