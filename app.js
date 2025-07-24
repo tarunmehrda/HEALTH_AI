@@ -16,6 +16,16 @@ if (!process.env.USDA_API_KEY) {
   process.exit(1);
 }
 
+// Middleware to extract userId from requests
+app.use((req, res, next) => {
+  // Try to get userId from header, body, or query
+  req.userId = req.headers['x-user-id'] || req.body.userId || req.query.userId;
+  if (!req.userId) {
+    return res.status(401).json({ error: 'Missing userId. Please login.' });
+  }
+  next();
+});
+
 // Function to extract food and quantity from text
 function extractFoodAndQuantity(text) {
   const input = text.toLowerCase().trim();
@@ -273,26 +283,30 @@ app.get('/nutrition', (req, res) => {
 });
 
 // In-memory cart storage (in production, use a database)
-let cart = [];
+const userCarts = {}; // { userId: [cartItems] }
 
 // In-memory streak tracking storage (in production, use a database)
-let userStreakData = {
-  currentStreak: 0,
-  longestStreak: 0,
-  lastActiveDate: null,
-  streakLog: [], // Array of dates in YYYY-MM-DD format
-  totalDaysLogged: 0,
-  streakStartDate: null,
-  dailyNutritionData: {} // New: Store daily nutrition data by date
-};
+const userStreaks = {}; // { userId: streakData }
 
 // Function to add nutrition data to daily log
-function addToDailyLog(nutritionData) {
+function addToDailyLog(nutritionData, userId) {
   const today = getCurrentDate();
   
   // Initialize today's data if it doesn't exist
-  if (!userStreakData.dailyNutritionData[today]) {
-    userStreakData.dailyNutritionData[today] = {
+  if (!userStreaks[userId] || !userStreaks[userId].dailyNutritionData) {
+    userStreaks[userId] = {
+      currentStreak: 0,
+      longestStreak: 0,
+      lastActiveDate: null,
+      streakLog: [], // Array of dates in YYYY-MM-DD format
+      totalDaysLogged: 0,
+      streakStartDate: null,
+      dailyNutritionData: {} // New: Store daily nutrition data by date
+    };
+  }
+
+  if (!userStreaks[userId].dailyNutritionData[today]) {
+    userStreaks[userId].dailyNutritionData[today] = {
       date: today,
       foods: [],
       totalCalories: 0,
@@ -315,32 +329,32 @@ function addToDailyLog(nutritionData) {
     addedAt: new Date().toISOString()
   };
 
-  userStreakData.dailyNutritionData[today].foods.push(foodEntry);
+  userStreaks[userId].dailyNutritionData[today].foods.push(foodEntry);
 
   // Update daily totals
-  userStreakData.dailyNutritionData[today].totalCalories += extractNumericValue(nutritionData.calculatedNutrition.calories);
-  userStreakData.dailyNutritionData[today].totalProtein += extractNumericValue(nutritionData.calculatedNutrition.protein);
-  userStreakData.dailyNutritionData[today].totalFat += extractNumericValue(nutritionData.calculatedNutrition.fat);
-  userStreakData.dailyNutritionData[today].totalCarbs += extractNumericValue(nutritionData.calculatedNutrition.carbohydrates);
+  userStreaks[userId].dailyNutritionData[today].totalCalories += extractNumericValue(nutritionData.calculatedNutrition.calories);
+  userStreaks[userId].dailyNutritionData[today].totalProtein += extractNumericValue(nutritionData.calculatedNutrition.protein);
+  userStreaks[userId].dailyNutritionData[today].totalFat += extractNumericValue(nutritionData.calculatedNutrition.fat);
+  userStreaks[userId].dailyNutritionData[today].totalCarbs += extractNumericValue(nutritionData.calculatedNutrition.carbohydrates);
 
-  return userStreakData.dailyNutritionData[today];
+  return userStreaks[userId].dailyNutritionData[today];
 }
 
 // Function to get nutrition data for a specific date
-function getDailyNutritionData(date) {
-  return userStreakData.dailyNutritionData[date] || null;
+function getDailyNutritionData(date, userId) {
+  return userStreaks[userId]?.dailyNutritionData[date] || null;
 }
 
 // Function to get nutrition data for date range
-function getNutritionDataRange(startDate, endDate) {
+function getNutritionDataRange(startDate, endDate, userId) {
   const result = {};
   const start = new Date(startDate);
   const end = new Date(endDate);
   
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const dateStr = d.toISOString().split('T')[0];
-    if (userStreakData.dailyNutritionData[dateStr]) {
-      result[dateStr] = userStreakData.dailyNutritionData[dateStr];
+    if (userStreaks[userId]?.dailyNutritionData[dateStr]) {
+      result[dateStr] = userStreaks[userId].dailyNutritionData[dateStr];
     }
   }
   
@@ -368,50 +382,50 @@ function daysBetweenDates(date1, date2) {
 }
 
 // Function to update streak when user adds to cart
-function updateStreak() {
+function updateStreak(userId) {
   const today = getCurrentDate();
 
   // If already logged today, don't update streak
-  if (userStreakData.streakLog.includes(today)) {
+  if (userStreaks[userId]?.streakLog.includes(today)) {
     return {
       streakUpdated: false,
       reason: 'Already logged today',
-      currentStreak: userStreakData.currentStreak
+      currentStreak: userStreaks[userId].currentStreak
     };
   }
 
   // Add today to the log
-  userStreakData.streakLog.push(today);
-  userStreakData.totalDaysLogged++;
-  userStreakData.lastActiveDate = today;
+  userStreaks[userId].streakLog.push(today);
+  userStreaks[userId].totalDaysLogged++;
+  userStreaks[userId].lastActiveDate = today;
 
-  if (userStreakData.currentStreak === 0) {
+  if (userStreaks[userId].currentStreak === 0) {
     // First time logging
-    userStreakData.currentStreak = 1;
-    userStreakData.streakStartDate = today;
+    userStreaks[userId].currentStreak = 1;
+    userStreaks[userId].streakStartDate = today;
   } else {
     const yesterday = getDateDaysAgo(1);
 
-    if (userStreakData.streakLog.includes(yesterday)) {
+    if (userStreaks[userId].streakLog.includes(yesterday)) {
       // Consecutive day - increase streak
-      userStreakData.currentStreak++;
+      userStreaks[userId].currentStreak++;
     } else {
       // Not consecutive - reset streak
-      userStreakData.currentStreak = 1;
-      userStreakData.streakStartDate = today;
+      userStreaks[userId].currentStreak = 1;
+      userStreaks[userId].streakStartDate = today;
     }
   }
 
   // Update longest streak if current is higher
-  if (userStreakData.currentStreak > userStreakData.longestStreak) {
-    userStreakData.longestStreak = userStreakData.currentStreak;
+  if (userStreaks[userId].currentStreak > userStreaks[userId].longestStreak) {
+    userStreaks[userId].longestStreak = userStreaks[userId].currentStreak;
   }
 
   return {
     streakUpdated: true,
     reason: 'Streak updated successfully',
-    currentStreak: userStreakData.currentStreak,
-    isNewRecord: userStreakData.currentStreak === userStreakData.longestStreak
+    currentStreak: userStreaks[userId].currentStreak,
+    isNewRecord: userStreaks[userId].currentStreak === userStreaks[userId].longestStreak
   };
 }
 
@@ -513,20 +527,20 @@ app.get('/api/addtocart', async (req, res) => {
 
       try {
         // Add to daily nutrition log
-        const dailyEntry = addToDailyLog(nutritionData);
+        const dailyEntry = addToDailyLog(nutritionData, req.userId);
         dailyLogEntries.push(dailyEntry);
 
         // Create a normalized name for comparison (remove quantities)
         const normalizedName = nutritionData.parsedFood.toLowerCase().trim();
 
         // Check if item already exists in cart
-        const existingItemIndex = cart.findIndex(cartItem =>
+        const existingItemIndex = userCarts[req.userId]?.findIndex(cartItem =>
           cartItem.normalizedName === normalizedName
         );
 
         if (existingItemIndex !== -1) {
           // Update existing item - combine quantities and nutrition values
-          const existingItem = cart[existingItemIndex];
+          const existingItem = userCarts[req.userId][existingItemIndex];
 
           // Combine nutrition values
           const updatedNutrition = {
@@ -542,7 +556,7 @@ app.get('/api/addtocart', async (req, res) => {
           };
 
           // Update the existing item
-          cart[existingItemIndex] = {
+          userCarts[req.userId][existingItemIndex] = {
             ...existingItem,
             originalInputs: [...existingItem.originalInputs, nutritionData.originalInput],
             inputQuantity: existingItem.inputQuantity + ' + ' + nutritionData.inputQuantity,
@@ -568,7 +582,7 @@ app.get('/api/addtocart', async (req, res) => {
             lastUpdated: new Date().toISOString()
           };
 
-          cart.push(cartItem);
+          userCarts[req.userId].push(cartItem);
 
           results.push({
             action: 'added',
@@ -587,8 +601,8 @@ app.get('/api/addtocart', async (req, res) => {
     }
 
     // Update streak tracking
-    const streakUpdate = updateStreak();
-    const todayData = getDailyNutritionData(getCurrentDate());
+    const streakUpdate = updateStreak(req.userId);
+    const todayData = getDailyNutritionData(getCurrentDate(), req.userId);
 
     // Return comprehensive response
     const response = {
@@ -596,9 +610,9 @@ app.get('/api/addtocart', async (req, res) => {
       message: `Processed ${nutritionDataArray.length} item(s): ${results.length} successful, ${errors.length} failed`,
       results: results,
       cartSummary: {
-        totalItems: cart.length,
-        totalCalories: cart.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.calories), 0),
-        totalProtein: Math.round(cart.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.protein), 0) * 10) / 10
+        totalItems: userCarts[req.userId]?.length || 0,
+        totalCalories: userCarts[req.userId]?.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.calories), 0) || 0,
+        totalProtein: Math.round(userCarts[req.userId]?.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.protein), 0) * 10) / 10 || 0
       },
       todayNutrition: {
         date: getCurrentDate(),
@@ -610,13 +624,13 @@ app.get('/api/addtocart', async (req, res) => {
         foods: todayData ? todayData.foods : []
       },
       streakInfo: {
-        currentStreak: userStreakData.currentStreak,
-        longestStreak: userStreakData.longestStreak,
-        lastActiveDate: userStreakData.lastActiveDate,
+        currentStreak: userStreaks[req.userId].currentStreak,
+        longestStreak: userStreaks[req.userId].longestStreak,
+        lastActiveDate: userStreaks[req.userId].lastActiveDate,
         streakUpdated: streakUpdate.streakUpdated,
         streakMessage: streakUpdate.reason,
         isNewRecord: streakUpdate.isNewRecord || false,
-        totalDaysLogged: userStreakData.totalDaysLogged
+        totalDaysLogged: userStreaks[req.userId].totalDaysLogged
       }
     };
 
@@ -638,6 +652,7 @@ app.get('/api/addtocart', async (req, res) => {
 
 // Endpoint: GET /api/cart - View current cart with streak info
 app.get('/api/cart', (req, res) => {
+  const cart = userCarts[req.userId] || [];
   const totalCalories = cart.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.calories), 0);
   const totalProtein = cart.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.protein), 0);
   
@@ -650,7 +665,7 @@ app.get('/api/cart', (req, res) => {
     const date = getDateDaysAgo(i);
     recentDays.push({
       date: date,
-      logged: userStreakData.streakLog.includes(date),
+      logged: userStreaks[req.userId]?.streakLog.includes(date),
       isToday: date === today
     });
   }
@@ -664,28 +679,28 @@ app.get('/api/cart', (req, res) => {
       lastUpdated: cart.length > 0 ? Math.max(...cart.map(item => new Date(item.lastUpdated).getTime())) : null
     },
     streakInfo: {
-      currentStreak: userStreakData.currentStreak,
-      longestStreak: userStreakData.longestStreak,
-      lastActiveDate: userStreakData.lastActiveDate,
-      totalDaysLogged: userStreakData.totalDaysLogged,
-      streakStartDate: userStreakData.streakStartDate,
-      todayLogged: userStreakData.streakLog.includes(today),
-      yesterdayLogged: userStreakData.streakLog.includes(yesterday),
+      currentStreak: userStreaks[req.userId].currentStreak,
+      longestStreak: userStreaks[req.userId].longestStreak,
+      lastActiveDate: userStreaks[req.userId].lastActiveDate,
+      totalDaysLogged: userStreaks[req.userId].totalDaysLogged,
+      streakStartDate: userStreaks[req.userId].streakStartDate,
+      todayLogged: userStreaks[req.userId].streakLog.includes(today),
+      yesterdayLogged: userStreaks[req.userId].streakLog.includes(yesterday),
       recentWeek: recentDays,
       streakStatus: {
-        canLogToday: !userStreakData.streakLog.includes(today),
-        streakAtRisk: !userStreakData.streakLog.includes(today) && userStreakData.currentStreak > 0,
-        message: userStreakData.streakLog.includes(today)
-          ? `Great! You've already logged today. Current streak: ${userStreakData.currentStreak} days!`
-          : userStreakData.currentStreak > 0
-            ? `Don't break your ${userStreakData.currentStreak}-day streak! Log your nutrition today.`
+        canLogToday: !userStreaks[req.userId].streakLog.includes(today),
+        streakAtRisk: !userStreaks[req.userId].streakLog.includes(today) && userStreaks[req.userId].currentStreak > 0,
+        message: userStreaks[req.userId].streakLog.includes(today)
+          ? `Great! You've already logged today. Current streak: ${userStreaks[req.userId].currentStreak} days!`
+          : userStreaks[req.userId].currentStreak > 0
+            ? `Don't break your ${userStreaks[req.userId].currentStreak}-day streak! Log your nutrition today.`
             : 'Start your nutrition tracking streak today!'
       },
       achievements: {
-        firstDay: userStreakData.totalDaysLogged >= 1,
-        weekStreak: userStreakData.longestStreak >= 7,
-        monthStreak: userStreakData.longestStreak >= 30,
-        hundredDays: userStreakData.totalDaysLogged >= 100
+        firstDay: userStreaks[req.userId].totalDaysLogged >= 1,
+        weekStreak: userStreaks[req.userId].longestStreak >= 7,
+        monthStreak: userStreaks[req.userId].longestStreak >= 30,
+        hundredDays: userStreaks[req.userId].totalDaysLogged >= 100
       }
     }
   });
@@ -693,8 +708,8 @@ app.get('/api/cart', (req, res) => {
 
 // Endpoint: DELETE /api/cart - Clear cart
 app.delete('/api/cart', (req, res) => {
-  const itemCount = cart.length;
-  cart = [];
+  const itemCount = userCarts[req.userId]?.length || 0;
+  userCarts[req.userId] = [];
   res.json({
     success: true,
     message: `Cleared ${itemCount} item(s) from cart`,
@@ -705,20 +720,20 @@ app.delete('/api/cart', (req, res) => {
 // Endpoint: DELETE /api/cart/:id - Remove specific item from cart
 app.delete('/api/cart/:id', (req, res) => {
   const itemId = parseFloat(req.params.id);
-  const itemIndex = cart.findIndex(item => item.id === itemId);
+  const itemIndex = userCarts[req.userId]?.findIndex(item => item.id === itemId);
 
   if (itemIndex === -1) {
     return res.status(404).json({ error: 'Item not found in cart' });
   }
 
-  const removedItem = cart.splice(itemIndex, 1)[0];
+  const removedItem = userCarts[req.userId].splice(itemIndex, 1)[0];
   res.json({
     success: true,
     message: 'Item removed from cart',
     removedItem: removedItem,
     cartSummary: {
-      totalItems: cart.length,
-      totalCalories: cart.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.calories), 0)
+      totalItems: userCarts[req.userId]?.length || 0,
+      totalCalories: userCarts[req.userId]?.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.calories), 0) || 0
     }
   });
 });
@@ -734,44 +749,44 @@ app.get('/api/streak', (req, res) => {
     const date = getDateDaysAgo(i);
     recentDays.push({
       date: date,
-      logged: userStreakData.streakLog.includes(date),
+      logged: userStreaks[req.userId]?.streakLog.includes(date),
       isToday: date === today
     });
   }
 
   res.json({
-    currentStreak: userStreakData.currentStreak,
-    longestStreak: userStreakData.longestStreak,
-    totalDaysLogged: userStreakData.totalDaysLogged,
-    lastActiveDate: userStreakData.lastActiveDate,
-    streakStartDate: userStreakData.streakStartDate,
-    todayLogged: userStreakData.streakLog.includes(today),
-    yesterdayLogged: userStreakData.streakLog.includes(yesterday),
+    currentStreak: userStreaks[req.userId].currentStreak,
+    longestStreak: userStreaks[req.userId].longestStreak,
+    totalDaysLogged: userStreaks[req.userId].totalDaysLogged,
+    lastActiveDate: userStreaks[req.userId].lastActiveDate,
+    streakStartDate: userStreaks[req.userId].streakStartDate,
+    todayLogged: userStreaks[req.userId].streakLog.includes(today),
+    yesterdayLogged: userStreaks[req.userId].streakLog.includes(yesterday),
     recentWeek: recentDays,
     streakStatus: {
-      canLogToday: !userStreakData.streakLog.includes(today),
-      streakAtRisk: !userStreakData.streakLog.includes(today) && userStreakData.currentStreak > 0,
-      message: userStreakData.streakLog.includes(today)
-        ? `Great! You've already logged today. Current streak: ${userStreakData.currentStreak} days!`
-        : userStreakData.currentStreak > 0
-          ? `Don't break your ${userStreakData.currentStreak}-day streak! Log your nutrition today.`
+      canLogToday: !userStreaks[req.userId].streakLog.includes(today),
+      streakAtRisk: !userStreaks[req.userId].streakLog.includes(today) && userStreaks[req.userId].currentStreak > 0,
+      message: userStreaks[req.userId].streakLog.includes(today)
+        ? `Great! You've already logged today. Current streak: ${userStreaks[req.userId].currentStreak} days!`
+        : userStreaks[req.userId].currentStreak > 0
+          ? `Don't break your ${userStreaks[req.userId].currentStreak}-day streak! Log your nutrition today.`
           : 'Start your nutrition tracking streak today!'
     },
     achievements: {
-      firstDay: userStreakData.totalDaysLogged >= 1,
-      weekStreak: userStreakData.longestStreak >= 7,
-      monthStreak: userStreakData.longestStreak >= 30,
-      hundredDays: userStreakData.totalDaysLogged >= 100
+      firstDay: userStreaks[req.userId].totalDaysLogged >= 1,
+      weekStreak: userStreaks[req.userId].longestStreak >= 7,
+      monthStreak: userStreaks[req.userId].longestStreak >= 30,
+      hundredDays: userStreaks[req.userId].totalDaysLogged >= 100
     }
   });
 });
 
 // Endpoint: POST /api/streak/reset - Reset streak (for testing or user request)
 app.post('/api/streak/reset', (req, res) => {
-  const oldStreak = { ...userStreakData };
-  const savedDailyNutritionData = { ...userStreakData.dailyNutritionData };
+  const oldStreak = { ...userStreaks[req.userId] };
+  const savedDailyNutritionData = { ...userStreaks[req.userId].dailyNutritionData };
 
-  userStreakData = {
+  userStreaks[req.userId] = {
     currentStreak: 0,
     longestStreak: 0,
     lastActiveDate: null,
@@ -790,7 +805,7 @@ app.post('/api/streak/reset', (req, res) => {
       totalDaysLogged: oldStreak.totalDaysLogged
     },
     newData: {
-      ...userStreakData,
+      ...userStreaks[req.userId],
       nutritionHistoryPreserved: true,
       daysWithData: Object.keys(savedDailyNutritionData).length
     }
@@ -803,7 +818,7 @@ app.get('/api/nutrition/history', (req, res) => {
 
   if (date) {
     // Get specific date
-    const dayData = getDailyNutritionData(date);
+    const dayData = getDailyNutritionData(date, req.userId);
     if (!dayData) {
       return res.status(404).json({ 
         error: `No nutrition data found for ${date}`,
@@ -818,7 +833,7 @@ app.get('/api/nutrition/history', (req, res) => {
 
   if (startDate && endDate) {
     // Get date range
-    const rangeData = getNutritionDataRange(startDate, endDate);
+    const rangeData = getNutritionDataRange(startDate, endDate, req.userId);
     return res.json({
       startDate: startDate,
       endDate: endDate,
@@ -830,7 +845,7 @@ app.get('/api/nutrition/history', (req, res) => {
   // Get last 7 days by default
   const today = getCurrentDate();
   const weekAgo = getDateDaysAgo(7);
-  const weekData = getNutritionDataRange(weekAgo, today);
+  const weekData = getNutritionDataRange(weekAgo, today, req.userId);
 
   res.json({
     message: 'Last 7 days nutrition history',
@@ -848,7 +863,7 @@ app.get('/api/nutrition/history', (req, res) => {
 // Endpoint: GET /api/nutrition/today - Get today's nutrition data
 app.get('/api/nutrition/today', (req, res) => {
   const today = getCurrentDate();
-  const todayData = getDailyNutritionData(today);
+  const todayData = getDailyNutritionData(today, req.userId);
 
   if (!todayData) {
     return res.json({
@@ -881,14 +896,14 @@ app.get('/api/nutrition/today', (req, res) => {
 // Endpoint: GET /api/streak/history - Get complete streak history with nutrition data
 app.get('/api/streak/history', (req, res) => {
   // Get all dates with nutrition data
-  const datesWithData = Object.keys(userStreakData.dailyNutritionData).sort();
+  const datesWithData = Object.keys(userStreaks[req.userId]?.dailyNutritionData || {}).sort();
   
   // Create a summary of each day's nutrition
   const nutritionSummary = datesWithData.map(date => {
-    const dayData = userStreakData.dailyNutritionData[date];
+    const dayData = userStreaks[req.userId]?.dailyNutritionData[date];
     return {
       date,
-      logged: userStreakData.streakLog.includes(date),
+      logged: userStreaks[req.userId]?.streakLog.includes(date),
       totalFoods: dayData.foods.length,
       totalCalories: Math.round(dayData.totalCalories),
       totalProtein: Math.round(dayData.totalProtein * 10) / 10,
@@ -906,12 +921,12 @@ app.get('/api/streak/history', (req, res) => {
   const streakPeriods = [];
   let currentPeriod = null;
 
-  userStreakData.streakLog.sort().forEach(date => {
+  userStreaks[req.userId]?.streakLog.sort().forEach(date => {
     const yesterday = new Date(date);
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = yesterday.toISOString().split('T')[0];
     
-    if (!currentPeriod || !userStreakData.streakLog.includes(yesterdayStr)) {
+    if (!currentPeriod || !userStreaks[req.userId]?.streakLog.includes(yesterdayStr)) {
       // Start new period
       currentPeriod = {
         startDate: date,
@@ -928,16 +943,16 @@ app.get('/api/streak/history', (req, res) => {
 
   res.json({
     streakSummary: {
-      currentStreak: userStreakData.currentStreak,
-      longestStreak: userStreakData.longestStreak,
-      totalDaysLogged: userStreakData.totalDaysLogged,
-      streakStartDate: userStreakData.streakStartDate,
-      lastActiveDate: userStreakData.lastActiveDate
+      currentStreak: userStreaks[req.userId].currentStreak,
+      longestStreak: userStreaks[req.userId].longestStreak,
+      totalDaysLogged: userStreaks[req.userId].totalDaysLogged,
+      streakStartDate: userStreaks[req.userId].streakStartDate,
+      lastActiveDate: userStreaks[req.userId].lastActiveDate
     },
     streakPeriods: streakPeriods,
     nutritionHistory: nutritionSummary,
     datesWithData: datesWithData,
-    streakLog: userStreakData.streakLog.sort()
+    streakLog: userStreaks[req.userId]?.streakLog.sort() || []
   });
 });
 
