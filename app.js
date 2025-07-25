@@ -16,12 +16,11 @@ if (!process.env.USDA_API_KEY) {
   process.exit(1);
 }
 
-// Middleware to extract userId from requests
+// Middleware to extract and validate userId
 app.use((req, res, next) => {
-  // Try to get userId from header, body, or query
   req.userId = req.headers['x-user-id'] || req.body.userId || req.query.userId;
-  if (!req.userId) {
-    return res.status(401).json({ error: 'Missing userId. Please login.' });
+  if (!req.userId || typeof req.userId !== 'string' || req.userId.trim() === '') {
+    return res.status(401).json({ error: 'Missing or invalid userId. Please provide a valid userId via x-user-id header, body, or query.' });
   }
   next();
 });
@@ -29,22 +28,21 @@ app.use((req, res, next) => {
 // Function to extract food and quantity from text
 function extractFoodAndQuantity(text) {
   const input = text.toLowerCase().trim();
-  
-  // Enhanced regex patterns to include ml
   const patterns = [
     // ml patterns
     /(\d+(?:\.\d+)?)\s*ml\s+(?:of\s+)?(.+)/,
     /(\d+(?:\.\d+)?)\s*milliliters?\s+(?:of\s+)?(.+)/,
     /(\d+(?:\.\d+)?)\s*millilitres?\s+(?:of\s+)?(.+)/,
-    // existing patterns...
+    // kg patterns
     /(\d+(?:\.\d+)?)\s*kg\s+(?:of\s+)?(.+)/,
     /(\d+(?:\.\d+)?)\s*kilograms?\s+(?:of\s+)?(.+)/,
+    // g patterns
     /(\d+(?:\.\d+)?)\s*g\s+(?:of\s+)?(.+)/,
     /(\d+(?:\.\d+)?)\s*grams?\s+(?:of\s+)?(.+)/,
+    // default (pieces)
     /(\d+(?:\.\d+)?)\s+(.+)/
   ];
 
-  // Check each pattern
   for (const pattern of patterns) {
     const match = input.match(pattern);
     if (match) {
@@ -53,7 +51,6 @@ function extractFoodAndQuantity(text) {
       let unit = 'pieces';
       let originalUnit = 'pieces';
 
-      // Determine unit based on pattern
       if (pattern.source.includes('ml') || pattern.source.includes('milliliter')) {
         unit = 'ml';
         originalUnit = 'ml';
@@ -64,9 +61,6 @@ function extractFoodAndQuantity(text) {
       } else if (pattern.source.includes('g') || pattern.source.includes('gram')) {
         unit = 'grams';
         originalUnit = 'grams';
-      } else {
-        unit = 'pieces';
-        originalUnit = 'pieces';
       }
 
       return {
@@ -80,7 +74,6 @@ function extractFoodAndQuantity(text) {
     }
   }
 
-  // Default case - no quantity found
   return {
     originalText: text,
     food: input,
@@ -95,11 +88,9 @@ function extractFoodAndQuantity(text) {
 function calculateNutrition(baseNutrients, quantity, unit, foodName) {
   const getNutrientValue = (name) => {
     const n = baseNutrients.find(n => n.nutrient?.name?.toLowerCase().includes(name.toLowerCase()));
-    if (!n) return { amount: 0, unit: 'N/A' };
-    return { amount: n.amount || 0, unit: n.nutrient.unitName || 'N/A' };
+    return n ? { amount: n.amount || 0, unit: n.nutrient.unitName || 'N/A' } : { amount: 0, unit: 'N/A' };
   };
 
-  // Base nutrition values (typically per 100g)
   const baseCalories = getNutrientValue('Energy');
   const baseProtein = getNutrientValue('Protein');
   const baseFat = getNutrientValue('Total lipid');
@@ -112,13 +103,11 @@ function calculateNutrition(baseNutrients, quantity, unit, foodName) {
 
   let multiplier = 1;
 
-  if (unit === 'grams') {
-    // USDA data is typically per 100g, so calculate multiplier
+  if (unit === 'grams' || unit === 'ml') {
     multiplier = quantity / 100;
   } else {
-    // For pieces, estimate average weight
     const avgWeights = {
-      'apple': 182, // grams
+      'apple': 182,
       'banana': 118,
       'orange': 154,
       'egg': 50,
@@ -127,8 +116,7 @@ function calculateNutrition(baseNutrients, quantity, unit, foodName) {
       'chicken breast': 174,
       'potato': 173
     };
-
-    const avgWeight = avgWeights[foodName.toLowerCase()] || 100; // default 100g
+    const avgWeight = avgWeights[foodName.toLowerCase()] || 100;
     multiplier = (quantity * avgWeight) / 100;
   }
 
@@ -156,13 +144,8 @@ function calculateNutrition(baseNutrients, quantity, unit, foodName) {
   };
 }
 
-// Endpoint: POST /nutrition (direct route for Render compatibility)
+// Endpoint: POST /nutrition
 app.post('/nutrition', async (req, res) => {
-  // Debug logging
-  console.log('Request body:', req.body);
-  console.log('Content-Type:', req.get('Content-Type'));
-
-  // Check if req.body exists
   if (!req.body) {
     return res.status(400).json({ error: 'Request body is missing. Please send JSON data with Content-Type: application/json' });
   }
@@ -176,18 +159,14 @@ app.post('/nutrition', async (req, res) => {
       examples: {
         simple: 'apple',
         pieces: '2 apples',
-        grams: 'I had 200 grams of rice',
-        kilograms: 'I ate 1.5 kg chicken'
+        grams: '200 grams of rice',
+        kilograms: '1.5 kg chicken'
       }
     });
   }
 
   try {
-    // Extract food and quantity from the input
     const parsed = extractFoodAndQuantity(foodName);
-    console.log("🧠 Parsed input:", parsed);
-
-    // Search USDA database for the food
     const searchRes = await axios.get('https://api.nal.usda.gov/fdc/v1/foods/search', {
       params: {
         query: parsed.food,
@@ -204,26 +183,19 @@ app.post('/nutrition', async (req, res) => {
     }
 
     const fdcId = searchRes.data.foods[0].fdcId;
-
-    // Get detailed nutrition information
     const detailRes = await axios.get(`https://api.nal.usda.gov/fdc/v1/food/${fdcId}`, {
       params: { api_key: process.env.USDA_API_KEY }
     });
 
     const nutrients = detailRes.data.foodNutrients || [];
-
-    // Calculate nutrition based on quantity
     const calculatedNutrition = calculateNutrition(nutrients, parsed.quantity, parsed.unit, parsed.food);
 
-    const result = {
+    res.json({
       originalInput: parsed.originalText,
       parsedFood: parsed.food,
       inputQuantity: `${parsed.originalQuantity} ${parsed.originalUnit}`,
       calculationQuantity: `${parsed.quantity} ${parsed.unit}`,
       foodName: detailRes.data.description,
-      nutritionPer100g: {
-        note: "Base nutrition values from USDA (typically per 100g)"
-      },
       calculatedNutrition: {
         calories: `${calculatedNutrition.calories} ${calculatedNutrition.units.calories}`,
         protein: `${calculatedNutrition.protein} ${calculatedNutrition.units.protein}`,
@@ -241,67 +213,64 @@ app.post('/nutrition', async (req, res) => {
           parsed.unit === 'grams' ?
             `${parsed.quantity}g ÷ 100g × base nutrition` :
             `${parsed.quantity} pieces × estimated weight × base nutrition`,
-        note: parsed.originalUnit === 'kg' ?
-          `Converted ${parsed.originalQuantity}kg to ${parsed.quantity}g for calculation` :
-          parsed.unit === 'pieces' ?
-            `Estimated average weight used for ${parsed.food}` :
-            'Weight-based calculation'
+        note: parsed.unit === 'pieces' ? `Estimated average weight used for ${parsed.food}` : ''
       }
-    };
-
-    res.json(result);
-
+    });
   } catch (err) {
     console.error('Error details:', err.response?.data || err.message);
-
     if (err.response?.status === 403) {
-      return res.status(403).json({
-        error: 'USDA API authentication failed',
-        details: 'Check your USDA API key'
-      });
+      return res.status(403).json({ error: 'USDA API authentication failed', details: 'Check your USDA API key' });
     }
-
-    res.status(500).json({
-      error: 'Internal server error',
-      details: err.message
-    });
+    res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 
-// Endpoint: GET /nutrition - Simple food search (for testing)
-app.get('/nutrition', (req, res) => {
-  res.json({
-    message: 'Use POST method to search for nutrition data',
-    usage: 'POST /nutrition with JSON body: {"foodName": "apple"}',
-    examples: {
-      simple: 'apple',
-      pieces: '2 apples', 
-      grams: 'I had 200 grams of rice',
-      kilograms: 'I ate 1.5 kg chicken'
-    }
-  });
-});
+// In-memory storage (replace with database in production)
+const userCarts = {};
+const userStreaks = {};
 
-// In-memory cart storage (in production, use a database)
-const userCarts = {}; // { userId: [cartItems] }
+// Helper functions
+function getCurrentDate() {
+  return new Date().toISOString().split('T')[0];
+}
 
-// In-memory streak tracking storage (in production, use a database)
-const userStreaks = {}; // { userId: streakData }
+function getDateDaysAgo(daysAgo) {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  return date.toISOString().split('T')[0];
+}
 
-// Function to add nutrition data to daily log
+function extractNumericValue(nutritionString) {
+  if (typeof nutritionString !== 'string') return 0;
+  const match = nutritionString.match(/^(\d+(?:\.\d+)?)/);
+  return match ? parseFloat(match[1]) : 0;
+}
+
+function extractUnit(nutritionString) {
+  if (typeof nutritionString !== 'string') return '';
+  const match = nutritionString.match(/^[\d.]+\s*(.+)$/);
+  return match ? match[1].trim() : '';
+}
+
+function combineNutritionValues(existing, additional) {
+  const existingValue = extractNumericValue(existing);
+  const additionalValue = extractNumericValue(additional);
+  const unit = extractUnit(existing) || extractUnit(additional);
+  const combined = Math.round((existingValue + additionalValue) * 100) / 100;
+  return `${combined} ${unit}`;
+}
+
 function addToDailyLog(nutritionData, userId) {
   const today = getCurrentDate();
-  
-  // Initialize today's data if it doesn't exist
-  if (!userStreaks[userId] || !userStreaks[userId].dailyNutritionData) {
+  if (!userStreaks[userId]) {
     userStreaks[userId] = {
       currentStreak: 0,
       longestStreak: 0,
       lastActiveDate: null,
-      streakLog: [], // Array of dates in YYYY-MM-DD format
+      streakLog: [],
       totalDaysLogged: 0,
       streakStartDate: null,
-      dailyNutritionData: {} // New: Store daily nutrition data by date
+      dailyNutritionData: {}
     };
   }
 
@@ -317,7 +286,6 @@ function addToDailyLog(nutritionData, userId) {
     };
   }
 
-  // Add food to today's log
   const foodEntry = {
     id: Date.now() + Math.random(),
     originalInput: nutritionData.originalInput,
@@ -330,8 +298,6 @@ function addToDailyLog(nutritionData, userId) {
   };
 
   userStreaks[userId].dailyNutritionData[today].foods.push(foodEntry);
-
-  // Update daily totals
   userStreaks[userId].dailyNutritionData[today].totalCalories += extractNumericValue(nutritionData.calculatedNutrition.calories);
   userStreaks[userId].dailyNutritionData[today].totalProtein += extractNumericValue(nutritionData.calculatedNutrition.protein);
   userStreaks[userId].dailyNutritionData[today].totalFat += extractNumericValue(nutritionData.calculatedNutrition.fat);
@@ -340,52 +306,8 @@ function addToDailyLog(nutritionData, userId) {
   return userStreaks[userId].dailyNutritionData[today];
 }
 
-// Function to get nutrition data for a specific date
-function getDailyNutritionData(date, userId) {
-  return userStreaks[userId]?.dailyNutritionData[date] || null;
-}
-
-// Function to get nutrition data for date range
-function getNutritionDataRange(startDate, endDate, userId) {
-  const result = {};
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().split('T')[0];
-    if (userStreaks[userId]?.dailyNutritionData[dateStr]) {
-      result[dateStr] = userStreaks[userId].dailyNutritionData[dateStr];
-    }
-  }
-  
-  return result;
-}
-
-// Helper function to get current date in YYYY-MM-DD format
-function getCurrentDate() {
-  return new Date().toISOString().split('T')[0];
-}
-
-// Helper function to get date from days ago
-function getDateDaysAgo(daysAgo) {
-  const date = new Date();
-  date.setDate(date.getDate() - daysAgo);
-  return date.toISOString().split('T')[0];
-}
-
-// Helper function to calculate days between two dates
-function daysBetweenDates(date1, date2) {
-  const oneDay = 24 * 60 * 60 * 1000; // hours*minutes*seconds*milliseconds
-  const firstDate = new Date(date1);
-  const secondDate = new Date(date2);
-  return Math.round(Math.abs((firstDate - secondDate) / oneDay));
-}
-
-// Function to update streak when user adds to cart
 function updateStreak(userId) {
   const today = getCurrentDate();
-
-  // If already logged today, don't update streak
   if (userStreaks[userId]?.streakLog.includes(today)) {
     return {
       streakUpdated: false,
@@ -394,29 +316,23 @@ function updateStreak(userId) {
     };
   }
 
-  // Add today to the log
   userStreaks[userId].streakLog.push(today);
   userStreaks[userId].totalDaysLogged++;
   userStreaks[userId].lastActiveDate = today;
 
   if (userStreaks[userId].currentStreak === 0) {
-    // First time logging
     userStreaks[userId].currentStreak = 1;
     userStreaks[userId].streakStartDate = today;
   } else {
     const yesterday = getDateDaysAgo(1);
-
     if (userStreaks[userId].streakLog.includes(yesterday)) {
-      // Consecutive day - increase streak
       userStreaks[userId].currentStreak++;
     } else {
-      // Not consecutive - reset streak
       userStreaks[userId].currentStreak = 1;
       userStreaks[userId].streakStartDate = today;
     }
   }
 
-  // Update longest streak if current is higher
   if (userStreaks[userId].currentStreak > userStreaks[userId].longestStreak) {
     userStreaks[userId].longestStreak = userStreaks[userId].currentStreak;
   }
@@ -429,71 +345,19 @@ function updateStreak(userId) {
   };
 }
 
-// Helper function to extract numeric value from nutrition string (e.g., "189 kcal" -> 189)
-function extractNumericValue(nutritionString) {
-  if (typeof nutritionString !== 'string') return 0;
-  const match = nutritionString.match(/^(\d+(?:\.\d+)?)/);
-  return match ? parseFloat(match[1]) : 0;
-}
+// Endpoint: POST /api/addtocart
+app.post('/api/addtocart', async (req, res) => {
+  const nutritionDataArray = Array.isArray(req.body) ? req.body : [req.body];
 
-// Helper function to get unit from nutrition string (e.g., "189 kcal" -> "kcal")
-function extractUnit(nutritionString) {
-  if (typeof nutritionString !== 'string') return '';
-  const match = nutritionString.match(/^[\d.]+\s*(.+)$/);
-  return match ? match[1].trim() : '';
-}
-
-// Helper function to combine nutrition values
-function combineNutritionValues(existing, additional) {
-  const existingValue = extractNumericValue(existing);
-  const additionalValue = extractNumericValue(additional);
-  const unit = extractUnit(existing) || extractUnit(additional);
-
-  const combined = Math.round((existingValue + additionalValue) * 100) / 100;
-  return `${combined} ${unit}`;
-}
-
-// Endpoint: GET /api/addtocart - Store nutrition data directly (supports multiple items)
-app.get('/api/addtocart', async (req, res) => {
-  console.log('Add to cart request:', req.query);
-
-  if (!req.query || Object.keys(req.query).length === 0) {
-    return res.status(400).json({ error: 'Query parameters are missing' });
+  if (!nutritionDataArray.length) {
+    return res.status(400).json({ error: 'No nutrition data provided' });
   }
 
-  // Expect nutrition data as query parameters or JSON in query
-  let nutritionDataArray = [];
-
-  // Check if data is passed as JSON string in query parameter
-  if (req.query.data) {
-    try {
-      const parsedData = JSON.parse(req.query.data);
-
-      // Support both single item and array of items
-      if (Array.isArray(parsedData)) {
-        nutritionDataArray = parsedData;
-      } else {
-        nutritionDataArray = [parsedData];
-      }
-    } catch (error) {
-      return res.status(400).json({ error: 'Invalid JSON in data parameter' });
-    }
-  } else {
-    // Use query parameters directly (single item only)
-    nutritionDataArray = [req.query];
-  }
-
-  // Validate each nutrition data item
   for (let i = 0; i < nutritionDataArray.length; i++) {
     const nutritionData = nutritionDataArray[i];
     if (!nutritionData.originalInput || !nutritionData.parsedFood || !nutritionData.calculatedNutrition) {
       return res.status(400).json({
         error: `Invalid nutrition data format for item ${i + 1}. Please send data from /nutrition endpoint`,
-        examples: {
-          singleItem: 'GET /api/addtocart?data={"originalInput":"2 apples","parsedFood":"apple","calculatedNutrition":{"calories":"189 kcal"}}',
-          multipleItems: 'GET /api/addtocart?data=[{"originalInput":"2 apples","parsedFood":"apple","calculatedNutrition":{"calories":"189 kcal"}},{"originalInput":"200g rice","parsedFood":"rice","calculatedNutrition":{"calories":"278 kcal"}}]',
-          note: 'Send complete JSON data from /nutrition response(s)'
-        },
         expectedFormat: {
           originalInput: 'string',
           parsedFood: 'string',
@@ -516,150 +380,102 @@ app.get('/api/addtocart', async (req, res) => {
     }
   }
 
-  try {
-    const results = [];
-    const errors = [];
-    const dailyLogEntries = [];
+  if (!userCarts[req.userId]) userCarts[req.userId] = [];
 
-    // Process each nutrition data item
-    for (let i = 0; i < nutritionDataArray.length; i++) {
-      const nutritionData = nutritionDataArray[i];
+  const results = [];
+  const errors = [];
 
-      try {
-        // Add to daily nutrition log
-        const dailyEntry = addToDailyLog(nutritionData, req.userId);
-        dailyLogEntries.push(dailyEntry);
+  for (const nutritionData of nutritionDataArray) {
+    try {
+      const dailyEntry = addToDailyLog(nutritionData, req.userId);
+      const normalized = nutritionData.parsedFood.toLowerCase().trim();
+      const existingIndex = userCarts[req.userId].findIndex(ci => ci.normalizedName === normalized);
 
-        // Create a normalized name for comparison (remove quantities)
-        const normalizedName = nutritionData.parsedFood.toLowerCase().trim();
+      if (existingIndex !== -1) {
+        const existing = userCarts[req.userId][existingIndex];
+        const updatedNutrition = {
+          calories: combineNutritionValues(existing.calculatedNutrition.calories, nutritionData.calculatedNutrition.calories),
+          protein: combineNutritionValues(existing.calculatedNutrition.protein, nutritionData.calculatedNutrition.protein),
+          fat: combineNutritionValues(existing.calculatedNutrition.fat, nutritionData.calculatedNutrition.fat),
+          carbohydrates: combineNutritionValues(existing.calculatedNutrition.carbohydrates, nutritionData.calculatedNutrition.carbohydrates),
+          sugar: combineNutritionValues(existing.calculatedNutrition.sugar, nutritionData.calculatedNutrition.sugar),
+          fiber: combineNutritionValues(existing.calculatedNutrition.fiber, nutritionData.calculatedNutrition.fiber),
+          calcium: combineNutritionValues(existing.calculatedNutrition.calcium, nutritionData.calculatedNutrition.calcium),
+          iron: combineNutritionValues(existing.calculatedNutrition.iron, nutritionData.calculatedNutrition.iron),
+          sodium: combineNutritionValues(existing.calculatedNutrition.sodium, nutritionData.calculatedNutrition.sodium)
+        };
 
-        // Check if item already exists in cart
-        const existingItemIndex = userCarts[req.userId]?.findIndex(cartItem =>
-          cartItem.normalizedName === normalizedName
-        );
-
-        if (existingItemIndex !== -1) {
-          // Update existing item - combine quantities and nutrition values
-          const existingItem = userCarts[req.userId][existingItemIndex];
-
-          // Combine nutrition values
-          const updatedNutrition = {
-            calories: combineNutritionValues(existingItem.calculatedNutrition.calories, nutritionData.calculatedNutrition.calories),
-            protein: combineNutritionValues(existingItem.calculatedNutrition.protein, nutritionData.calculatedNutrition.protein),
-            fat: combineNutritionValues(existingItem.calculatedNutrition.fat, nutritionData.calculatedNutrition.fat),
-            carbohydrates: combineNutritionValues(existingItem.calculatedNutrition.carbohydrates, nutritionData.calculatedNutrition.carbohydrates),
-            sugar: combineNutritionValues(existingItem.calculatedNutrition.sugar, nutritionData.calculatedNutrition.sugar),
-            fiber: combineNutritionValues(existingItem.calculatedNutrition.fiber, nutritionData.calculatedNutrition.fiber),
-            calcium: combineNutritionValues(existingItem.calculatedNutrition.calcium, nutritionData.calculatedNutrition.calcium),
-            iron: combineNutritionValues(existingItem.calculatedNutrition.iron, nutritionData.calculatedNutrition.iron),
-            sodium: combineNutritionValues(existingItem.calculatedNutrition.sodium, nutritionData.calculatedNutrition.sodium)
-          };
-
-          // Update the existing item
-          userCarts[req.userId][existingItemIndex] = {
-            ...existingItem,
-            originalInputs: [...existingItem.originalInputs, nutritionData.originalInput],
-            inputQuantity: existingItem.inputQuantity + ' + ' + nutritionData.inputQuantity,
-            calculationQuantity: existingItem.calculationQuantity + ' + ' + nutritionData.calculationQuantity,
-            calculatedNutrition: updatedNutrition,
-            lastUpdated: new Date().toISOString()
-          };
-
-          results.push({
-            action: 'updated',
-            item: normalizedName,
-            message: `Updated existing ${normalizedName} in cart`
-          });
-
-        } else {
-          // Add new item to cart
-          const cartItem = {
-            id: Date.now() + Math.random() + i, // Simple ID generation with index
-            normalizedName: normalizedName,
-            originalInputs: [nutritionData.originalInput],
-            ...nutritionData,
-            addedAt: new Date().toISOString(),
-            lastUpdated: new Date().toISOString()
-          };
-
-          userCarts[req.userId].push(cartItem);
-
-          results.push({
-            action: 'added',
-            item: normalizedName,
-            message: `Added ${normalizedName} to cart`
-          });
-        }
-
-      } catch (itemError) {
-        errors.push({
-          item: i + 1,
-          originalInput: nutritionData.originalInput || 'Unknown',
-          error: itemError.message
-        });
+        userCarts[req.userId][existingIndex] = {
+          ...existing,
+          originalInputs: [...existing.originalInputs, nutritionData.originalInput],
+          inputQuantity: existing.inputQuantity + ' + ' + nutritionData.inputQuantity,
+          calculationQuantity: existing.calculationQuantity + ' + ' + nutritionData.calculationQuantity,
+          calculatedNutrition: updatedNutrition,
+          lastUpdated: new Date().toISOString()
+        };
+        results.push({ action: 'updated', item: normalized, message: `Updated ${normalized}` });
+      } else {
+        const cartItem = {
+          normalizedName: normalized,
+          originalInputs: [nutritionData.originalInput],
+          parsedFood: nutritionData.parsedFood,
+          inputQuantity: nutritionData.inputQuantity,
+          calculationQuantity: nutritionData.calculationQuantity,
+          foodName: nutritionData.foodName,
+          calculatedNutrition: nutritionData.calculatedNutrition,
+          addedAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString()
+        };
+        userCarts[req.userId].push(cartItem);
+        results.push({ action: 'added', item: normalized, message: `Added ${normalized}` });
       }
+    } catch (err) {
+      errors.push({ originalInput: nutritionData.originalInput, error: err.message });
     }
-
-    // Update streak tracking
-    const streakUpdate = updateStreak(req.userId);
-    const todayData = getDailyNutritionData(getCurrentDate(), req.userId);
-
-    // Return comprehensive response
-    const response = {
-      success: errors.length === 0,
-      message: `Processed ${nutritionDataArray.length} item(s): ${results.length} successful, ${errors.length} failed`,
-      results: results,
-      cartSummary: {
-        totalItems: userCarts[req.userId]?.length || 0,
-        totalCalories: userCarts[req.userId]?.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.calories), 0) || 0,
-        totalProtein: Math.round(userCarts[req.userId]?.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.protein), 0) * 10) / 10 || 0
-      },
-      todayNutrition: {
-        date: getCurrentDate(),
-        totalFoods: todayData ? todayData.foods.length : 0,
-        totalCalories: todayData ? Math.round(todayData.totalCalories) : 0,
-        totalProtein: todayData ? Math.round(todayData.totalProtein * 10) / 10 : 0,
-        totalFat: todayData ? Math.round(todayData.totalFat * 10) / 10 : 0,
-        totalCarbs: todayData ? Math.round(todayData.totalCarbs * 10) / 10 : 0,
-        foods: todayData ? todayData.foods : []
-      },
-      streakInfo: {
-        currentStreak: userStreaks[req.userId].currentStreak,
-        longestStreak: userStreaks[req.userId].longestStreak,
-        lastActiveDate: userStreaks[req.userId].lastActiveDate,
-        streakUpdated: streakUpdate.streakUpdated,
-        streakMessage: streakUpdate.reason,
-        isNewRecord: streakUpdate.isNewRecord || false,
-        totalDaysLogged: userStreaks[req.userId].totalDaysLogged
-      }
-    };
-
-    if (errors.length > 0) {
-      response.errors = errors;
-      response.success = errors.length < nutritionDataArray.length; // Partial success if some items failed
-    }
-
-    res.json(response);
-
-  } catch (error) {
-    console.error('Add to cart error:', error);
-    res.status(500).json({
-      error: 'Internal server error',
-      details: error.message
-    });
   }
+
+  const streakInfo = updateStreak(req.userId);
+  const cart = userCarts[req.userId];
+  const totalCalories = cart.reduce((sum, ci) => sum + extractNumericValue(ci.calculatedNutrition.calories), 0);
+  const totalProtein = Math.round(cart.reduce((sum, ci) => sum + extractNumericValue(ci.calculatedNutrition.protein), 0) * 10) / 10;
+
+  res.json({
+    success: results.length > 0,
+    results,
+    errors: errors.length ? errors : undefined,
+    cart: cart.map(ci => ({
+      food: ci.foodName,
+      inputs: ci.originalInputs,
+      quantity: ci.inputQuantity,
+      calculatedNutrition: ci.calculatedNutrition,
+      lastUpdated: ci.lastUpdated
+    })),
+    cartSummary: {
+      totalItems: cart.length,
+      totalCalories,
+      totalProtein,
+      totalFat: Math.round(cart.reduce((sum, ci) => sum + extractNumericValue(ci.calculatedNutrition.fat), 0) * 10) / 10,
+      totalCarbs: Math.round(cart.reduce((sum, ci) => sum + extractNumericValue(ci.calculatedNutrition.carbohydrates), 0) * 10) / 10
+    },
+    streakInfo: {
+      currentStreak: userStreaks[req.userId].currentStreak,
+      longestStreak: userStreaks[req.userId].longestStreak,
+      totalDaysLogged: userStreaks[req.userId].totalDaysLogged,
+      lastActiveDate: userStreaks[req.userId].lastActiveDate,
+      streakUpdated: streakInfo.streakUpdated,
+      streakMessage: streakInfo.reason,
+      isNewRecord: streakInfo.isNewRecord ?? false
+    }
+  });
 });
 
-// Endpoint: GET /api/cart - View current cart with streak info
+// Endpoint: GET /api/cart
 app.get('/api/cart', (req, res) => {
   const cart = userCarts[req.userId] || [];
   const totalCalories = cart.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.calories), 0);
   const totalProtein = cart.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.protein), 0);
-  
   const today = getCurrentDate();
   const yesterday = getDateDaysAgo(1);
-
-  // Calculate recent week data for cart response
   const recentDays = [];
   for (let i = 6; i >= 0; i--) {
     const date = getDateDaysAgo(i);
@@ -679,34 +495,34 @@ app.get('/api/cart', (req, res) => {
       lastUpdated: cart.length > 0 ? Math.max(...cart.map(item => new Date(item.lastUpdated).getTime())) : null
     },
     streakInfo: {
-      currentStreak: userStreaks[req.userId].currentStreak,
-      longestStreak: userStreaks[req.userId].longestStreak,
-      lastActiveDate: userStreaks[req.userId].lastActiveDate,
-      totalDaysLogged: userStreaks[req.userId].totalDaysLogged,
-      streakStartDate: userStreaks[req.userId].streakStartDate,
-      todayLogged: userStreaks[req.userId].streakLog.includes(today),
-      yesterdayLogged: userStreaks[req.userId].streakLog.includes(yesterday),
+      currentStreak: userStreaks[req.userId]?.currentStreak || 0,
+      longestStreak: userStreaks[req.userId]?.longestStreak || 0,
+      lastActiveDate: userStreaks[req.userId]?.lastActiveDate || null,
+      totalDaysLogged: userStreaks[req.userId]?.totalDaysLogged || 0,
+      streakStartDate: userStreaks[req.userId]?.streakStartDate || null,
+      todayLogged: userStreaks[req.userId]?.streakLog.includes(today) || false,
+      yesterdayLogged: userStreaks[req.userId]?.streakLog.includes(yesterday) || false,
       recentWeek: recentDays,
       streakStatus: {
-        canLogToday: !userStreaks[req.userId].streakLog.includes(today),
-        streakAtRisk: !userStreaks[req.userId].streakLog.includes(today) && userStreaks[req.userId].currentStreak > 0,
-        message: userStreaks[req.userId].streakLog.includes(today)
-          ? `Great! You've already logged today. Current streak: ${userStreaks[req.userId].currentStreak} days!`
-          : userStreaks[req.userId].currentStreak > 0
-            ? `Don't break your ${userStreaks[req.userId].currentStreak}-day streak! Log your nutrition today.`
+        canLogToday: !userStreaks[req.userId]?.streakLog.includes(today),
+        streakAtRisk: !userStreaks[req.userId]?.streakLog.includes(today) && userStreaks[req.userId]?.currentStreak > 0,
+        message: userStreaks[req.userId]?.streakLog.includes(today)
+          ? `Great! You've already logged today. Current streak: ${userStreaks[req.userId]?.currentStreak} days!`
+          : userStreaks[req.userId]?.currentStreak > 0
+            ? `Don't break your ${userStreaks[req.userId]?.currentStreak}-day streak! Log your nutrition today.`
             : 'Start your nutrition tracking streak today!'
       },
       achievements: {
-        firstDay: userStreaks[req.userId].totalDaysLogged >= 1,
-        weekStreak: userStreaks[req.userId].longestStreak >= 7,
-        monthStreak: userStreaks[req.userId].longestStreak >= 30,
-        hundredDays: userStreaks[req.userId].totalDaysLogged >= 100
+        firstDay: userStreaks[req.userId]?.totalDaysLogged >= 1,
+        weekStreak: userStreaks[req.userId]?.longestStreak >= 7,
+        monthStreak: userStreaks[req.userId]?.longestStreak >= 30,
+        hundredDays: userStreaks[req.userId]?.totalDaysLogged >= 100
       }
     }
   });
 });
 
-// Endpoint: DELETE /api/cart - Clear cart
+// Endpoint: DELETE /api/cart
 app.delete('/api/cart', (req, res) => {
   const itemCount = userCarts[req.userId]?.length || 0;
   userCarts[req.userId] = [];
@@ -717,292 +533,7 @@ app.delete('/api/cart', (req, res) => {
   });
 });
 
-// Endpoint: DELETE /api/cart/:id - Remove specific item from cart
-app.delete('/api/cart/:id', (req, res) => {
-  const itemId = parseFloat(req.params.id);
-  const itemIndex = userCarts[req.userId]?.findIndex(item => item.id === itemId);
-
-  if (itemIndex === -1) {
-    return res.status(404).json({ error: 'Item not found in cart' });
-  }
-
-  const removedItem = userCarts[req.userId].splice(itemIndex, 1)[0];
-  res.json({
-    success: true,
-    message: 'Item removed from cart',
-    removedItem: removedItem,
-    cartSummary: {
-      totalItems: userCarts[req.userId]?.length || 0,
-      totalCalories: userCarts[req.userId]?.reduce((sum, item) => sum + extractNumericValue(item.calculatedNutrition.calories), 0) || 0
-    }
-  });
-});
-
-// Endpoint: GET /api/streak - Get detailed streak information
-app.get('/api/streak', (req, res) => {
-  const today = getCurrentDate();
-  const yesterday = getDateDaysAgo(1);
-
-  // Calculate streak statistics
-  const recentDays = [];
-  for (let i = 6; i >= 0; i--) {
-    const date = getDateDaysAgo(i);
-    recentDays.push({
-      date: date,
-      logged: userStreaks[req.userId]?.streakLog.includes(date),
-      isToday: date === today
-    });
-  }
-
-  res.json({
-    currentStreak: userStreaks[req.userId].currentStreak,
-    longestStreak: userStreaks[req.userId].longestStreak,
-    totalDaysLogged: userStreaks[req.userId].totalDaysLogged,
-    lastActiveDate: userStreaks[req.userId].lastActiveDate,
-    streakStartDate: userStreaks[req.userId].streakStartDate,
-    todayLogged: userStreaks[req.userId].streakLog.includes(today),
-    yesterdayLogged: userStreaks[req.userId].streakLog.includes(yesterday),
-    recentWeek: recentDays,
-    streakStatus: {
-      canLogToday: !userStreaks[req.userId].streakLog.includes(today),
-      streakAtRisk: !userStreaks[req.userId].streakLog.includes(today) && userStreaks[req.userId].currentStreak > 0,
-      message: userStreaks[req.userId].streakLog.includes(today)
-        ? `Great! You've already logged today. Current streak: ${userStreaks[req.userId].currentStreak} days!`
-        : userStreaks[req.userId].currentStreak > 0
-          ? `Don't break your ${userStreaks[req.userId].currentStreak}-day streak! Log your nutrition today.`
-          : 'Start your nutrition tracking streak today!'
-    },
-    achievements: {
-      firstDay: userStreaks[req.userId].totalDaysLogged >= 1,
-      weekStreak: userStreaks[req.userId].longestStreak >= 7,
-      monthStreak: userStreaks[req.userId].longestStreak >= 30,
-      hundredDays: userStreaks[req.userId].totalDaysLogged >= 100
-    }
-  });
-});
-
-// Endpoint: POST /api/streak/reset - Reset streak (for testing or user request)
-app.post('/api/streak/reset', (req, res) => {
-  const oldStreak = { ...userStreaks[req.userId] };
-  const savedDailyNutritionData = { ...userStreaks[req.userId].dailyNutritionData };
-
-  userStreaks[req.userId] = {
-    currentStreak: 0,
-    longestStreak: 0,
-    lastActiveDate: null,
-    streakLog: [],
-    totalDaysLogged: 0,
-    streakStartDate: null,
-    dailyNutritionData: savedDailyNutritionData // Preserve the nutrition history
-  };
-
-  res.json({
-    success: true,
-    message: 'Streak data has been reset but nutrition history preserved',
-    previousData: {
-      currentStreak: oldStreak.currentStreak,
-      longestStreak: oldStreak.longestStreak,
-      totalDaysLogged: oldStreak.totalDaysLogged
-    },
-    newData: {
-      ...userStreaks[req.userId],
-      nutritionHistoryPreserved: true,
-      daysWithData: Object.keys(savedDailyNutritionData).length
-    }
-  });
-});
-
-// Endpoint: GET /api/nutrition/history - Get nutrition history by date range
-app.get('/api/nutrition/history', (req, res) => {
-  const { startDate, endDate, date } = req.query;
-
-  if (date) {
-    // Get specific date
-    const dayData = getDailyNutritionData(date, req.userId);
-    if (!dayData) {
-      return res.status(404).json({ 
-        error: `No nutrition data found for ${date}`,
-        date: date
-      });
-    }
-    return res.json({
-      date: date,
-      data: dayData
-    });
-  }
-
-  if (startDate && endDate) {
-    // Get date range
-    const rangeData = getNutritionDataRange(startDate, endDate, req.userId);
-    return res.json({
-      startDate: startDate,
-      endDate: endDate,
-      data: rangeData,
-      totalDays: Object.keys(rangeData).length
-    });
-  }
-
-  // Get last 7 days by default
-  const today = getCurrentDate();
-  const weekAgo = getDateDaysAgo(7);
-  const weekData = getNutritionDataRange(weekAgo, today, req.userId);
-
-  res.json({
-    message: 'Last 7 days nutrition history',
-    startDate: weekAgo,
-    endDate: today,
-    data: weekData,
-    totalDays: Object.keys(weekData).length,
-    usage: {
-      specificDate: '/api/nutrition/history?date=2024-01-17',
-      dateRange: '/api/nutrition/history?startDate=2024-01-15&endDate=2024-01-20'
-    }
-  });
-});
-
-// Endpoint: GET /api/nutrition/today - Get today's nutrition data
-app.get('/api/nutrition/today', (req, res) => {
-  const today = getCurrentDate();
-  const todayData = getDailyNutritionData(today, req.userId);
-
-  if (!todayData) {
-    return res.json({
-      date: today,
-      message: 'No nutrition data logged today',
-      data: {
-        date: today,
-        foods: [],
-        totalCalories: 0,
-        totalProtein: 0,
-        totalFat: 0,
-        totalCarbs: 0
-      }
-    });
-  }
-
-  res.json({
-    date: today,
-    data: todayData,
-    summary: {
-      totalFoods: todayData.foods.length,
-      totalCalories: Math.round(todayData.totalCalories),
-      totalProtein: Math.round(todayData.totalProtein * 10) / 10,
-      totalFat: Math.round(todayData.totalFat * 10) / 10,
-      totalCarbs: Math.round(todayData.totalCarbs * 10) / 10
-    }
-  });
-});
-
-// Endpoint: GET /api/streak/history - Get complete streak history with nutrition data
-app.get('/api/streak/history', (req, res) => {
-  // Get all dates with nutrition data
-  const datesWithData = Object.keys(userStreaks[req.userId]?.dailyNutritionData || {}).sort();
-  
-  // Create a summary of each day's nutrition
-  const nutritionSummary = datesWithData.map(date => {
-    const dayData = userStreaks[req.userId]?.dailyNutritionData[date];
-    return {
-      date,
-      logged: userStreaks[req.userId]?.streakLog.includes(date),
-      totalFoods: dayData.foods.length,
-      totalCalories: Math.round(dayData.totalCalories),
-      totalProtein: Math.round(dayData.totalProtein * 10) / 10,
-      totalFat: Math.round(dayData.totalFat * 10) / 10,
-      totalCarbs: Math.round(dayData.totalCarbs * 10) / 10,
-      foods: dayData.foods.map(food => ({
-        name: food.parsedFood,
-        quantity: food.inputQuantity,
-        calories: extractNumericValue(food.calculatedNutrition.calories)
-      }))
-    };
-  });
-
-  // Get streak periods (consecutive days)
-  const streakPeriods = [];
-  let currentPeriod = null;
-
-  userStreaks[req.userId]?.streakLog.sort().forEach(date => {
-    const yesterday = new Date(date);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-    
-    if (!currentPeriod || !userStreaks[req.userId]?.streakLog.includes(yesterdayStr)) {
-      // Start new period
-      currentPeriod = {
-        startDate: date,
-        endDate: date,
-        days: 1
-      };
-      streakPeriods.push(currentPeriod);
-    } else {
-      // Extend current period
-      currentPeriod.endDate = date;
-      currentPeriod.days++;
-    }
-  });
-
-  res.json({
-    streakSummary: {
-      currentStreak: userStreaks[req.userId].currentStreak,
-      longestStreak: userStreaks[req.userId].longestStreak,
-      totalDaysLogged: userStreaks[req.userId].totalDaysLogged,
-      streakStartDate: userStreaks[req.userId].streakStartDate,
-      lastActiveDate: userStreaks[req.userId].lastActiveDate
-    },
-    streakPeriods: streakPeriods,
-    nutritionHistory: nutritionSummary,
-    datesWithData: datesWithData,
-    streakLog: userStreaks[req.userId]?.streakLog.sort() || []
-  });
-});
-
-// Root endpoint - API documentation
-app.get('/', (req, res) => {
-  res.json({
-    name: 'USDA Nutrition API',
-    version: '1.0.0',
-    description: 'Complete nutrition analysis API with streak tracking',
-    endpoints: {
-      nutrition: {
-        method: 'POST',
-        url: '/nutrition',
-        description: 'Get nutrition data for food items',
-        body: { foodName: 'string (e.g., "2 apples", "200g rice", "1.5kg chicken")' }
-      },
-      cart: {
-        add: { method: 'GET', url: '/api/addtocart?data={nutritionData}', description: 'Add nutrition data to cart' },
-        view: { method: 'GET', url: '/api/cart', description: 'View current cart and streak info' },
-        clear: { method: 'DELETE', url: '/api/cart', description: 'Clear entire cart' },
-        remove: { method: 'DELETE', url: '/api/cart/:id', description: 'Remove specific item from cart' }
-      },
-      streak: {
-        view: { method: 'GET', url: '/api/streak', description: 'Get detailed streak information' },
-        reset: { method: 'POST', url: '/api/streak/reset', description: 'Reset streak data' },
-        history: { method: 'GET', url: '/api/streak/history', description: 'Get complete streak and nutrition history' }
-      },
-      nutrition_history: {
-        today: { method: 'GET', url: '/api/nutrition/today', description: 'Get today\'s nutrition data' },
-        history: { method: 'GET', url: '/api/nutrition/history', description: 'Get nutrition history by date range' }
-      }
-    },
-    examples: {
-      simple: 'POST /nutrition {"foodName": "apple"}',
-      quantity: 'POST /nutrition {"foodName": "2 apples"}',
-      grams: 'POST /nutrition {"foodName": "200 grams of rice"}',
-      kilograms: 'POST /nutrition {"foodName": "1.5 kg chicken"}'
-    },
-    features: [
-      'USDA nutrition database integration',
-      'Quantity parsing (pieces, grams, kilograms)',
-      'Nutrition cart management',
-      'Daily streak tracking',
-      'Nutrition history logging',
-      'Achievement system'
-    ]
-  });
-});
-
-// Health check
+// Endpoint: GET /health
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -1022,11 +553,7 @@ app.use((req, res) => {
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`- Local: http://localhost:${PORT}`);
-  console.log(`- Local IP: http://192.168.124.246:${PORT}`);
-  console.log(`- Android Emulator: http://10.0.2.2:${PORT}`);
   console.log(`- Health check: http://localhost:${PORT}/health`);
-  console.log(`- Render URL: https://your-app-name.onrender.com`);
-  console.log(`- Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
 // Graceful shutdown
